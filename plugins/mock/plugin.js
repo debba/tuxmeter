@@ -74,5 +74,5 @@
     }
   }
 
-  globalThis.__openusage_plugin = { id: "mock", probe }
+  globalThis.__tuxmeter_plugin = { id: "mock", probe }
 })()

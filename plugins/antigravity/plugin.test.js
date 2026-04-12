@@ -3,7 +3,7 @@ import { makeCtx } from "../test-helpers.js"
 
 const loadPlugin = async () => {
   await import("./plugin.js")
-  return globalThis.__openusage_plugin
+  return globalThis.__tuxmeter_plugin
 }
 
 // --- Fixtures ---
@@ -153,7 +153,7 @@ function makeProtobufBase64(ctx, accessToken, refreshToken, expirySeconds) {
 
 describe("antigravity plugin", () => {
   beforeEach(() => {
-    delete globalThis.__openusage_plugin
+    delete globalThis.__tuxmeter_plugin
     vi.resetModules()
   })
 

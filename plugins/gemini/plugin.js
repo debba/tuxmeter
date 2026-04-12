@@ -432,5 +432,5 @@
     return { plan: plan || undefined, lines }
   }
 
-  globalThis.__openusage_plugin = { id: "gemini", probe }
+  globalThis.__tuxmeter_plugin = { id: "gemini", probe }
 })()

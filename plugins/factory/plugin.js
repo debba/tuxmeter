@@ -321,7 +321,7 @@
         Authorization: "Bearer " + accessToken,
         "Content-Type": "application/json",
         Accept: "application/json",
-        "User-Agent": "OpenUsage",
+        "User-Agent": "Tuxmeter",
       },
       bodyText: JSON.stringify({ useCache: true }),
       timeoutMs: 10000,
@@ -469,5 +469,5 @@
     return { plan: plan, lines: lines }
   }
 
-  globalThis.__openusage_plugin = { id: "factory", probe }
+  globalThis.__tuxmeter_plugin = { id: "factory", probe }
 })()

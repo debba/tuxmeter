@@ -5,11 +5,9 @@ use aes_gcm::{
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use rquickjs::{Ctx, Exception, Function, Object};
-use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Mutex, OnceLock};
 
 const WHITELISTED_ENV_VARS: [&str; 16] = [
     "CODEX_HOME",
@@ -49,7 +47,7 @@ fn read_env_from_process(name: &str) -> Option<String> {
 }
 
 fn read_env_value_via_command(program: &str, args: &[&str]) -> Option<String> {
-    let output = Command::new(program).args(args).output().ok()?;
+    let output = Command::new(program).args(args).stdin(std::process::Stdio::null()).output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -57,7 +55,7 @@ fn read_env_value_via_command(program: &str, args: &[&str]) -> Option<String> {
     last_non_empty_trimmed_line(&stdout)
 }
 
-fn current_macos_keychain_account_from_user_env(user_env: Option<String>) -> String {
+fn current_keychain_account_from_user_env(user_env: Option<String>) -> String {
     user_env
         .and_then(|value| {
             let trimmed = value.trim();
@@ -68,131 +66,113 @@ fn current_macos_keychain_account_from_user_env(user_env: Option<String>) -> Str
             }
         })
         .or_else(|| read_env_value_via_command("id", &["-un"]))
-        .unwrap_or_else(|| "openusage-user".to_string())
+        .unwrap_or_else(|| "tuxmeter-user".to_string())
 }
 
-fn current_macos_keychain_account() -> String {
-    current_macos_keychain_account_from_user_env(read_env_from_process("USER"))
+fn current_keychain_account() -> String {
+    current_keychain_account_from_user_env(read_env_from_process("USER"))
 }
 
-fn keychain_find_generic_password_args(service: &str) -> Vec<OsString> {
-    vec![
-        OsString::from("find-generic-password"),
-        OsString::from("-s"),
-        OsString::from(service),
-        OsString::from("-w"),
-    ]
-}
+// ---------------------------------------------------------------------------
+// Keychain helpers (secret-tool / libsecret)
+// ---------------------------------------------------------------------------
+mod keychain_platform {
+    use std::process::Stdio;
 
-fn keychain_find_generic_password_args_for_account(service: &str, account: &str) -> Vec<OsString> {
-    vec![
-        OsString::from("find-generic-password"),
-        OsString::from("-a"),
-        OsString::from(account),
-        OsString::from("-s"),
-        OsString::from(service),
-        OsString::from("-w"),
-    ]
-}
-
-fn keychain_add_generic_password_args(service: &str, value: &str) -> Vec<OsString> {
-    vec![
-        OsString::from("add-generic-password"),
-        OsString::from("-U"),
-        OsString::from("-s"),
-        OsString::from(service),
-        OsString::from("-w"),
-        OsString::from(value),
-    ]
-}
-
-fn keychain_add_generic_password_args_for_account(
-    service: &str,
-    account: &str,
-    value: &str,
-) -> Vec<OsString> {
-    vec![
-        OsString::from("add-generic-password"),
-        OsString::from("-U"),
-        OsString::from("-a"),
-        OsString::from(account),
-        OsString::from("-s"),
-        OsString::from(service),
-        OsString::from("-w"),
-        OsString::from(value),
-    ]
-}
-
-fn terminal_env_cache() -> &'static Mutex<HashMap<String, Option<String>>> {
-    static CACHE: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn shell_from_env() -> Option<String> {
-    let shell = std::env::var("SHELL").ok()?;
-    let trimmed = shell.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let file = std::path::Path::new(trimmed).file_name()?.to_string_lossy();
-    let allowed = file == "zsh" || file == "bash" || file == "fish";
-    if allowed {
-        Some(trimmed.to_string())
-    } else {
-        None
-    }
-}
-
-fn read_env_from_interactive_shell(program: &str, name: &str) -> Option<String> {
-    let script = format!("printenv {}", name);
-    read_env_value_via_command(program, &["-ilc", script.as_str()])
-}
-
-fn read_env_from_interactive_shells(name: &str) -> Option<String> {
-    let mut programs: Vec<String> = Vec::new();
-
-    if let Some(shell) = shell_from_env() {
-        programs.push(shell);
-    }
-
-    for program in [
-        "/bin/zsh",
-        "/bin/bash",
-        "/opt/homebrew/bin/fish",
-        "/usr/local/bin/fish",
-        "/opt/local/bin/fish",
-    ] {
-        if !programs.iter().any(|p| p == program) {
-            programs.push(program.to_string());
+    pub fn read_password(service: &str) -> Result<String, String> {
+        let output = std::process::Command::new("secret-tool")
+            .args(["lookup", "service", service])
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("secret-tool lookup failed: {}", e))?;
+        if !output.status.success() {
+            return Err(format!("secret not found for service: {}", service));
         }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
-    for program in programs {
-        if let Some(value) = read_env_from_interactive_shell(program.as_str(), name) {
-            return Some(value);
+    pub fn read_password_for_account(service: &str, account: &str) -> Result<String, String> {
+        let output = std::process::Command::new("secret-tool")
+            .args(["lookup", "service", service, "account", account])
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("secret-tool lookup failed: {}", e))?;
+        if !output.status.success() {
+            return Err(format!(
+                "secret not found for service: {}, account: {}",
+                service, account
+            ));
         }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
-    None
+    pub fn write_password(service: &str, value: &str) -> Result<(), String> {
+        let mut child = std::process::Command::new("secret-tool")
+            .args([
+                "store",
+                "--label",
+                &format!("Tuxmeter - {}", service),
+                "service",
+                service,
+            ])
+            .stdin(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("secret-tool store failed: {}", e))?;
+
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            stdin
+                .write_all(value.as_bytes())
+                .map_err(|e| format!("failed to write secret: {}", e))?;
+        }
+        let status = child
+            .wait()
+            .map_err(|e| format!("secret-tool store failed: {}", e))?;
+        if !status.success() {
+            return Err("secret-tool store failed".to_string());
+        }
+        Ok(())
+    }
+
+    pub fn write_password_for_account(
+        service: &str,
+        account: &str,
+        value: &str,
+    ) -> Result<(), String> {
+        let mut child = std::process::Command::new("secret-tool")
+            .args([
+                "store",
+                "--label",
+                &format!("Tuxmeter - {}", service),
+                "service",
+                service,
+                "account",
+                account,
+            ])
+            .stdin(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("secret-tool store failed: {}", e))?;
+
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            stdin
+                .write_all(value.as_bytes())
+                .map_err(|e| format!("failed to write secret: {}", e))?;
+        }
+        let status = child
+            .wait()
+            .map_err(|e| format!("secret-tool store failed: {}", e))?;
+        if !status.success() {
+            return Err("secret-tool store failed".to_string());
+        }
+        Ok(())
+    }
 }
 
 fn resolve_env_value(name: &str) -> Option<String> {
-    // Prefer the current process env (fast + supports launchctl/terminal-launch).
-    if let Some(value) = read_env_from_process(name) {
-        return Some(value);
-    }
-
-    if let Ok(cache) = terminal_env_cache().lock() {
-        if let Some(cached) = cache.get(name) {
-            return cached.clone();
-        }
-    }
-
-    let resolved = read_env_from_interactive_shells(name);
-    if let Ok(mut cache) = terminal_env_cache().lock() {
-        cache.insert(name.to_string(), resolved.clone());
-    }
-    resolved
+    // On Linux, GUI apps inherit environment from the session,
+    // so the process env is sufficient.
+    read_env_from_process(name)
 }
 
 /// Redact sensitive value to first4...last4 format (UTF-8 safe)
@@ -511,7 +491,7 @@ pub fn inject_host_api<'js>(
     inject_ccusage(ctx, &host, plugin_id)?;
 
     probe_ctx.set("host", host)?;
-    globals.set("__openusage_ctx", probe_ctx)?;
+    globals.set("__tuxmeter_ctx", probe_ctx)?;
 
     Ok(())
 }
@@ -791,8 +771,8 @@ fn inject_http<'js>(ctx: &Ctx<'js>, host: &Object<'js>, plugin_id: &str) -> rqui
     ctx.eval::<(), _>(
         r#"
         (function() {
-            // Will be patched after __openusage_ctx is set.
-            if (typeof __openusage_ctx !== "undefined") {
+            // Will be patched after __tuxmeter_ctx is set.
+            if (typeof __tuxmeter_ctx !== "undefined") {
                 void 0;
             }
         })();
@@ -809,8 +789,8 @@ pub fn patch_http_wrapper(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
     ctx.eval::<(), _>(
         r#"
         (function() {
-            var rawFn = __openusage_ctx.host.http._requestRaw;
-            __openusage_ctx.host.http.request = function(req) {
+            var rawFn = __tuxmeter_ctx.host.http._requestRaw;
+            __tuxmeter_ctx.host.http.request = function(req) {
                 var json = JSON.stringify({
                     url: req.url,
                     method: req.method || "GET",
@@ -828,12 +808,12 @@ pub fn patch_http_wrapper(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
     )
 }
 
-/// Inject utility APIs (line builders, formatters, base64, jwt) onto __openusage_ctx
+/// Inject utility APIs (line builders, formatters, base64, jwt) onto __tuxmeter_ctx
 pub fn inject_utils(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
     ctx.eval::<(), _>(
         r#"
         (function() {
-            var ctx = __openusage_ctx;
+            var ctx = __tuxmeter_ctx;
 
             // Line builders (options object API)
             ctx.line = {
@@ -1174,6 +1154,7 @@ fn inject_ls<'js>(ctx: &Ctx<'js>, host: &Object<'js>, plugin_id: &str) -> rquick
 
                 let ps_output = match std::process::Command::new("/bin/ps")
                     .args(["-ax", "-o", "pid=,command="])
+                    .stdin(std::process::Stdio::null())
                     .output()
                 {
                     Ok(o) => o,
@@ -1298,6 +1279,7 @@ fn inject_ls<'js>(ctx: &Ctx<'js>, host: &Object<'js>, plugin_id: &str) -> rquick
                             "-p",
                             &process_pid.to_string(),
                         ])
+                        .stdin(std::process::Stdio::null())
                         .output()
                     {
                         Ok(o) if o.status.success() => {
@@ -1356,8 +1338,8 @@ pub fn patch_ls_wrapper(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
     ctx.eval::<(), _>(
         r#"
         (function() {
-            var rawFn = __openusage_ctx.host.ls._discoverRaw;
-            __openusage_ctx.host.ls.discover = function(opts) {
+            var rawFn = __tuxmeter_ctx.host.ls._discoverRaw;
+            __tuxmeter_ctx.host.ls.discover = function(opts) {
                 var optsJson;
                 try { optsJson = JSON.stringify(opts); } catch (e) { return null; }
                 var json = rawFn(optsJson);
@@ -1640,6 +1622,7 @@ fn ccusage_runner_available(candidate: &str, enriched_path: Option<&OsStr>) -> b
         command.env("PATH", path);
     }
     command
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
 
@@ -1656,6 +1639,7 @@ fn configure_ccusage_command(
         command.env("PATH", path);
     }
     command
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 }
@@ -1975,8 +1959,8 @@ pub fn patch_ccusage_wrapper(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
     ctx.eval::<(), _>(
         r#"
         (function() {
-            var rawFn = __openusage_ctx.host.ccusage._queryRaw;
-            __openusage_ctx.host.ccusage.query = function(opts) {
+            var rawFn = __tuxmeter_ctx.host.ccusage._queryRaw;
+            __tuxmeter_ctx.host.ccusage.query = function(opts) {
                 var result = rawFn(JSON.stringify(opts || {}));
                 try {
                     var parsed = JSON.parse(result);
@@ -2005,44 +1989,26 @@ fn inject_keychain<'js>(
         Function::new(
             ctx.clone(),
             move |ctx_inner: Ctx<'_>, service: String| -> rquickjs::Result<String> {
-                if !cfg!(target_os = "macos") {
-                    return Err(Exception::throw_message(
-                        &ctx_inner,
-                        "keychain API is only supported on macOS",
-                    ));
-                }
                 log::info!("[plugin:{}] keychain read: service={}", pid_read, service);
-                let output = std::process::Command::new("security")
-                    .args(keychain_find_generic_password_args(&service))
-                    .output()
-                    .map_err(|e| {
-                        Exception::throw_message(
-                            &ctx_inner,
-                            &format!("keychain read failed: {}", e),
-                        )
-                    })?;
-
-                if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    let first_line = stderr.lines().next().unwrap_or("").trim();
-                    log::warn!(
-                        "[plugin:{}] keychain read miss: service={}, error={}",
-                        pid_read,
-                        service,
-                        first_line
-                    );
-                    return Err(Exception::throw_message(
-                        &ctx_inner,
-                        &format!("keychain item not found: {}", first_line),
-                    ));
+                match keychain_platform::read_password(&service) {
+                    Ok(value) => {
+                        log::info!(
+                            "[plugin:{}] keychain read hit: service={}",
+                            pid_read,
+                            service
+                        );
+                        Ok(value)
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[plugin:{}] keychain read miss: service={}, error={}",
+                            pid_read,
+                            service,
+                            e
+                        );
+                        Err(Exception::throw_message(&ctx_inner, &e))
+                    }
                 }
-
-                log::info!(
-                    "[plugin:{}] keychain read hit: service={}",
-                    pid_read,
-                    service
-                );
-                Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
             },
         )?,
     )?;
@@ -2053,14 +2019,7 @@ fn inject_keychain<'js>(
         Function::new(
             ctx.clone(),
             move |ctx_inner: Ctx<'_>, service: String| -> rquickjs::Result<String> {
-                if !cfg!(target_os = "macos") {
-                    return Err(Exception::throw_message(
-                        &ctx_inner,
-                        "keychain API is only supported on macOS",
-                    ));
-                }
-                let account = current_macos_keychain_account();
-                let args = keychain_find_generic_password_args_for_account(&service, &account);
+                let account = current_keychain_account();
                 let redacted_account = redact_value(&account);
                 log::info!(
                     "[plugin:{}] keychain read: service={}, account={}",
@@ -2068,39 +2027,27 @@ fn inject_keychain<'js>(
                     service,
                     redacted_account
                 );
-                let output = std::process::Command::new("security")
-                    .args(&args)
-                    .output()
-                    .map_err(|e| {
-                        Exception::throw_message(
-                            &ctx_inner,
-                            &format!("keychain read failed: {}", e),
-                        )
-                    })?;
-
-                if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    let first_line = stderr.lines().next().unwrap_or("").trim();
-                    log::warn!(
-                        "[plugin:{}] keychain read miss: service={}, account={}, error={}",
-                        pid_read_current_user,
-                        service,
-                        redacted_account,
-                        first_line
-                    );
-                    return Err(Exception::throw_message(
-                        &ctx_inner,
-                        &format!("keychain item not found: {}", first_line),
-                    ));
+                match keychain_platform::read_password_for_account(&service, &account) {
+                    Ok(value) => {
+                        log::info!(
+                            "[plugin:{}] keychain read hit: service={}, account={}",
+                            pid_read_current_user,
+                            service,
+                            redacted_account
+                        );
+                        Ok(value)
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[plugin:{}] keychain read miss: service={}, account={}, error={}",
+                            pid_read_current_user,
+                            service,
+                            redacted_account,
+                            e
+                        );
+                        Err(Exception::throw_message(&ctx_inner, &e))
+                    }
                 }
-
-                log::info!(
-                    "[plugin:{}] keychain read hit: service={}, account={}",
-                    pid_read_current_user,
-                    service,
-                    redacted_account
-                );
-                Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
             },
         )?,
     )?;
@@ -2111,70 +2058,26 @@ fn inject_keychain<'js>(
         Function::new(
             ctx.clone(),
             move |ctx_inner: Ctx<'_>, service: String, value: String| -> rquickjs::Result<()> {
-                if !cfg!(target_os = "macos") {
-                    return Err(Exception::throw_message(
-                        &ctx_inner,
-                        "keychain API is only supported on macOS",
-                    ));
-                }
                 log::info!("[plugin:{}] keychain write: service={}", pid_write, service);
-
-                let mut account_arg: Option<String> = None;
-                let find_output = std::process::Command::new("security")
-                    .args(["find-generic-password", "-s", &service])
-                    .output();
-
-                if let Ok(output) = find_output {
-                    if output.status.success() {
-                        let stdout = String::from_utf8_lossy(&output.stdout);
-                        for line in stdout.lines() {
-                            if let Some(start) = line.find("\"acct\"<blob>=\"") {
-                                let rest = &line[start + 14..];
-                                if let Some(end) = rest.find('"') {
-                                    account_arg = Some(rest[..end].to_string());
-                                    break;
-                                }
-                            }
-                        }
+                match keychain_platform::write_password(&service, &value) {
+                    Ok(()) => {
+                        log::info!(
+                            "[plugin:{}] keychain write succeeded: service={}",
+                            pid_write,
+                            service
+                        );
+                        Ok(())
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[plugin:{}] keychain write failed: service={}, error={}",
+                            pid_write,
+                            service,
+                            e
+                        );
+                        Err(Exception::throw_message(&ctx_inner, &e))
                     }
                 }
-
-                let output = if let Some(ref acct) = account_arg {
-                    std::process::Command::new("security")
-                        .args(keychain_add_generic_password_args_for_account(
-                            &service, acct, &value,
-                        ))
-                        .output()
-                } else {
-                    std::process::Command::new("security")
-                        .args(keychain_add_generic_password_args(&service, &value))
-                        .output()
-                }
-                .map_err(|e| {
-                    Exception::throw_message(&ctx_inner, &format!("keychain write failed: {}", e))
-                })?;
-
-                if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    let first_line = stderr.lines().next().unwrap_or("").trim();
-                    log::warn!(
-                        "[plugin:{}] keychain write failed: service={}, error={}",
-                        pid_write,
-                        service,
-                        first_line
-                    );
-                    return Err(Exception::throw_message(
-                        &ctx_inner,
-                        &format!("keychain write failed: {}", first_line),
-                    ));
-                }
-
-                log::info!(
-                    "[plugin:{}] keychain write succeeded: service={}",
-                    pid_write,
-                    service
-                );
-                Ok(())
             },
         )?,
     )?;
@@ -2185,15 +2088,7 @@ fn inject_keychain<'js>(
         Function::new(
             ctx.clone(),
             move |ctx_inner: Ctx<'_>, service: String, value: String| -> rquickjs::Result<()> {
-                if !cfg!(target_os = "macos") {
-                    return Err(Exception::throw_message(
-                        &ctx_inner,
-                        "keychain API is only supported on macOS",
-                    ));
-                }
-                let account = current_macos_keychain_account();
-                let args =
-                    keychain_add_generic_password_args_for_account(&service, &account, &value);
+                let account = current_keychain_account();
                 let redacted_account = redact_value(&account);
                 log::info!(
                     "[plugin:{}] keychain write: service={}, account={}",
@@ -2201,39 +2096,27 @@ fn inject_keychain<'js>(
                     service,
                     redacted_account
                 );
-                let output = std::process::Command::new("security")
-                    .args(&args)
-                    .output()
-                    .map_err(|e| {
-                        Exception::throw_message(
-                            &ctx_inner,
-                            &format!("keychain write failed: {}", e),
-                        )
-                    })?;
-
-                if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    let first_line = stderr.lines().next().unwrap_or("").trim();
-                    log::warn!(
-                        "[plugin:{}] keychain write failed: service={}, account={}, error={}",
-                        pid_write_current_user,
-                        service,
-                        redacted_account,
-                        first_line
-                    );
-                    return Err(Exception::throw_message(
-                        &ctx_inner,
-                        &format!("keychain write failed: {}", first_line),
-                    ));
+                match keychain_platform::write_password_for_account(&service, &account, &value) {
+                    Ok(()) => {
+                        log::info!(
+                            "[plugin:{}] keychain write succeeded: service={}, account={}",
+                            pid_write_current_user,
+                            service,
+                            redacted_account
+                        );
+                        Ok(())
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[plugin:{}] keychain write failed: service={}, account={}, error={}",
+                            pid_write_current_user,
+                            service,
+                            redacted_account,
+                            e
+                        );
+                        Err(Exception::throw_message(&ctx_inner, &e))
+                    }
                 }
-
-                log::info!(
-                    "[plugin:{}] keychain write succeeded: service={}, account={}",
-                    pid_write_current_user,
-                    service,
-                    redacted_account
-                );
-                Ok(())
             },
         )?,
     )?;
@@ -2262,6 +2145,7 @@ fn inject_sqlite<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> rquickjs::Result<()
                 // Fall back to immutable=1 to bypass WAL/SHM lock issues after macOS sleep.
                 let primary = std::process::Command::new("sqlite3")
                     .args(["-readonly", "-json", &expanded, &sql])
+                    .stdin(std::process::Stdio::null())
                     .output()
                     .map_err(|e| {
                         Exception::throw_message(&ctx_inner, &format!("sqlite3 exec failed: {}", e))
@@ -2280,6 +2164,7 @@ fn inject_sqlite<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> rquickjs::Result<()
                 let uri_path = format!("file:{}?immutable=1", encoded);
                 let fallback = std::process::Command::new("sqlite3")
                     .args(["-readonly", "-json", &uri_path, &sql])
+                    .stdin(std::process::Stdio::null())
                     .output()
                     .map_err(|e| {
                         Exception::throw_message(&ctx_inner, &format!("sqlite3 exec failed: {}", e))
@@ -2317,6 +2202,7 @@ fn inject_sqlite<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> rquickjs::Result<()
                 let expanded = expand_path(&db_path);
                 let output = std::process::Command::new("sqlite3")
                     .args([&expanded, &sql])
+                    .stdin(std::process::Stdio::null())
                     .output()
                     .map_err(|e| {
                         Exception::throw_message(&ctx_inner, &format!("sqlite3 exec failed: {}", e))
@@ -2475,7 +2361,7 @@ mod tests {
             let app_data = std::env::temp_dir();
             inject_host_api(&ctx, "test", &app_data, "0.0.0").expect("inject host api");
             let globals = ctx.globals();
-            let probe_ctx: Object = globals.get("__openusage_ctx").expect("probe ctx");
+            let probe_ctx: Object = globals.get("__tuxmeter_ctx").expect("probe ctx");
             let host: Object = probe_ctx.get("host").expect("host");
             let crypto: Object = host.get("crypto").expect("crypto");
             let _decrypt: Function = crypto.get("decryptAes256Gcm").expect("decryptAes256Gcm");
@@ -2492,7 +2378,7 @@ mod tests {
             let app_data = std::env::temp_dir();
             inject_host_api(&ctx, "test", &app_data, "0.0.0").expect("inject host api");
             let js_expr = format!(
-                r#"__openusage_ctx.host.crypto.decryptAes256Gcm("{}", "{}")"#,
+                r#"__tuxmeter_ctx.host.crypto.decryptAes256Gcm("{}", "{}")"#,
                 envelope, key_b64
             );
             let decrypted: String = ctx.eval(js_expr).expect("js decrypt");
@@ -2508,7 +2394,7 @@ mod tests {
             let app_data = std::env::temp_dir();
             inject_host_api(&ctx, "test", &app_data, "0.0.0").expect("inject host api");
             let globals = ctx.globals();
-            let probe_ctx: Object = globals.get("__openusage_ctx").expect("probe ctx");
+            let probe_ctx: Object = globals.get("__tuxmeter_ctx").expect("probe ctx");
             let host: Object = probe_ctx.get("host").expect("host");
             let keychain: Object = host.get("keychain").expect("keychain");
             let _read: Function = keychain
@@ -2552,7 +2438,7 @@ mod tests {
             let app_data = std::env::temp_dir();
             inject_host_api(&ctx, "test", &app_data, "0.0.0").expect("inject host api");
             let globals = ctx.globals();
-            let probe_ctx: Object = globals.get("__openusage_ctx").expect("probe ctx");
+            let probe_ctx: Object = globals.get("__tuxmeter_ctx").expect("probe ctx");
             let host: Object = probe_ctx.get("host").expect("host");
             let env: Object = host.get("env").expect("env");
             let get: Function = env.get("get").expect("get");
@@ -2563,7 +2449,7 @@ mod tests {
                     get.call((name.to_string(),)).expect("get whitelisted var");
                 assert_eq!(value, expected, "{name} should match host env resolver");
 
-                let js_expr = format!(r#"__openusage_ctx.host.env.get("{}")"#, name);
+                let js_expr = format!(r#"__tuxmeter_ctx.host.env.get("{}")"#, name);
                 let js_value: Option<String> = ctx.eval(js_expr).expect("js get whitelisted var");
                 assert_eq!(
                     js_value, expected,
@@ -2572,7 +2458,7 @@ mod tests {
             }
 
             let blocked: Option<String> = get
-                .call(("__OPENUSAGE_TEST_NOT_WHITELISTED__".to_string(),))
+                .call(("__TUXMETER_TEST_NOT_WHITELISTED__".to_string(),))
                 .expect("get blocked var");
             assert!(
                 blocked.is_none(),
@@ -2580,7 +2466,7 @@ mod tests {
             );
 
             let js_blocked: Option<String> = ctx
-                .eval(r#"__openusage_ctx.host.env.get("__OPENUSAGE_TEST_NOT_WHITELISTED__")"#)
+                .eval(r#"__tuxmeter_ctx.host.env.get("__TUXMETER_TEST_NOT_WHITELISTED__")"#)
                 .expect("js get blocked var");
             assert!(
                 js_blocked.is_none(),
@@ -2620,7 +2506,7 @@ mod tests {
             let app_data = std::env::temp_dir();
             inject_host_api(&ctx, "test", &app_data, "0.0.0").expect("inject host api");
             let globals = ctx.globals();
-            let probe_ctx: Object = globals.get("__openusage_ctx").expect("probe ctx");
+            let probe_ctx: Object = globals.get("__tuxmeter_ctx").expect("probe ctx");
             let host: Object = probe_ctx.get("host").expect("host");
             let env: Object = host.get("env").expect("env");
             let get: Function = env.get("get").expect("get");
@@ -2633,7 +2519,7 @@ mod tests {
             );
 
             let js_value: Option<String> = ctx
-                .eval(r#"__openusage_ctx.host.env.get("ZAI_API_KEY")"#)
+                .eval(r#"__tuxmeter_ctx.host.env.get("ZAI_API_KEY")"#)
                 .expect("js get");
             assert_eq!(
                 js_value.as_deref(),
@@ -2644,10 +2530,10 @@ mod tests {
     }
 
     #[test]
-    fn current_macos_keychain_account_prefers_explicit_user_value() {
+    fn current_keychain_account_prefers_explicit_user_value() {
         assert_eq!(
-            current_macos_keychain_account_from_user_env(Some("openusage-test-user".to_string())),
-            "openusage-test-user"
+            current_keychain_account_from_user_env(Some("tuxmeter-test-user".to_string())),
+            "tuxmeter-test-user"
         );
     }
 
@@ -2657,97 +2543,6 @@ mod tests {
         let expected = home.join(".claude-custom").to_string_lossy().to_string();
 
         assert_eq!(expand_path("~/.claude-custom"), expected);
-    }
-
-    #[test]
-    fn keychain_find_generic_password_args_include_service_only_lookup() {
-        let args = keychain_find_generic_password_args("Claude Code-credentials");
-        let rendered: Vec<String> = args
-            .into_iter()
-            .map(|value| value.to_string_lossy().into_owned())
-            .collect();
-
-        assert_eq!(
-            rendered,
-            vec![
-                "find-generic-password",
-                "-s",
-                "Claude Code-credentials",
-                "-w",
-            ]
-        );
-    }
-
-    #[test]
-    fn keychain_find_generic_password_args_for_account_include_account_and_service() {
-        let args = keychain_find_generic_password_args_for_account(
-            "Claude Code-credentials",
-            "openusage-test-user",
-        );
-        let rendered: Vec<String> = args
-            .into_iter()
-            .map(|value| value.to_string_lossy().into_owned())
-            .collect();
-
-        assert_eq!(
-            rendered,
-            vec![
-                "find-generic-password",
-                "-a",
-                "openusage-test-user",
-                "-s",
-                "Claude Code-credentials",
-                "-w",
-            ]
-        );
-    }
-
-    #[test]
-    fn keychain_add_generic_password_args_include_service_only_write() {
-        let args = keychain_add_generic_password_args("Claude Code-credentials", "secret-value");
-        let rendered: Vec<String> = args
-            .into_iter()
-            .map(|value| value.to_string_lossy().into_owned())
-            .collect();
-
-        assert_eq!(
-            rendered,
-            vec![
-                "add-generic-password",
-                "-U",
-                "-s",
-                "Claude Code-credentials",
-                "-w",
-                "secret-value",
-            ]
-        );
-    }
-
-    #[test]
-    fn keychain_add_generic_password_args_for_account_include_update_account_service_and_value() {
-        let args = keychain_add_generic_password_args_for_account(
-            "Claude Code-credentials",
-            "openusage-test-user",
-            "secret-value",
-        );
-        let rendered: Vec<String> = args
-            .into_iter()
-            .map(|value| value.to_string_lossy().into_owned())
-            .collect();
-
-        assert_eq!(
-            rendered,
-            vec![
-                "add-generic-password",
-                "-U",
-                "-a",
-                "openusage-test-user",
-                "-s",
-                "Claude Code-credentials",
-                "-w",
-                "secret-value",
-            ]
-        );
     }
 
     #[test]
@@ -3199,7 +2994,7 @@ mod tests {
 
     #[test]
     fn ccusage_path_entries_with_home_and_existing_path_preserves_order() {
-        let home = std::path::PathBuf::from("/tmp/openusage-home");
+        let home = std::path::PathBuf::from("/tmp/tuxmeter-home");
         let existing = std::env::join_paths([
             std::path::PathBuf::from("/usr/bin"),
             std::path::PathBuf::from("/bin"),
@@ -3258,7 +3053,7 @@ mod tests {
 
     #[test]
     fn ccusage_enriched_path_with_preserves_entries_after_join_and_split() {
-        let home = std::path::PathBuf::from("/tmp/openusage-home");
+        let home = std::path::PathBuf::from("/tmp/tuxmeter-home");
         let existing = std::env::join_paths([
             std::path::PathBuf::from("/usr/bin"),
             std::path::PathBuf::from("/bin"),

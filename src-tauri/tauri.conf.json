@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "OpenUsage",
-  "version": "0.6.14",
-  "identifier": "com.sunstory.openusage",
+  "productName": "Tuxmeter",
+  "version": "0.0.1",
+  "identifier": "com.debba.tuxmeter",
   "build": {
     "beforeDevCommand": "bun run bundle:plugins && bun run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "OpenUsage",
+        "title": "Tuxmeter",
         "width": 400,
         "height": 500,
         "resizable": false,
@@ -25,33 +25,26 @@
     "security": {
       "csp": null
     },
-    "macOSPrivateApi": true
+    "macOSPrivateApi": false
   },
   "bundle": {
     "active": true,
     "targets": "all",
-    "macOS": {
-      "dmg": {
-        "appPosition": {
-          "x": 180,
-          "y": 170
-        },
-        "applicationFolderPosition": {
-          "x": 480,
-          "y": 170
-        },
-        "windowSize": {
-          "width": 660,
-          "height": 400
-        }
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0",
+          "libayatana-appindicator3-1",
+          "libsecret-tools"
+        ]
       }
     },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
+      "icons/icon.png"
     ],
     "resources": [
       "resources/bundled_plugins/**/*",
@@ -63,7 +56,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU2Njk4QTU0MDMzMEY5MTkKUldRWitUQURWSXBwVnFTY1FBWitxNlpaQnB5S3RVWW1qWHJ3NlRuZ2p3c2hPVzNTa3BUR0V0SXkK",
       "endpoints": [
-        "https://github.com/robinebers/openusage/releases/latest/download/latest.json"
+        "https://github.com/debba/tuxmeter/releases/latest/download/latest.json"
       ]
     }
   }

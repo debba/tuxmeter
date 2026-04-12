@@ -1,12 +1,8 @@
-#[cfg(target_os = "macos")]
-mod app_nap;
 mod config;
 mod local_http_api;
 mod panel;
 mod plugin_engine;
 mod tray;
-#[cfg(target_os = "macos")]
-mod webkit_config;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -195,10 +191,7 @@ fn init_panel(app_handle: tauri::AppHandle) {
 
 #[tauri::command]
 fn hide_panel(app_handle: tauri::AppHandle) {
-    use tauri_nspanel::ManagerExt;
-    if let Ok(panel) = app_handle.get_webview_panel("main") {
-        panel.hide();
-    }
+    panel::hide_panel(&app_handle);
 }
 
 #[tauri::command]
@@ -346,11 +339,16 @@ async fn start_probe_batch(
 
 #[tauri::command]
 fn get_log_path(app_handle: tauri::AppHandle) -> Result<String, String> {
-    // macOS log directory: ~/Library/Logs/{bundleIdentifier}
     let home = dirs::home_dir().ok_or("no home dir")?;
     let bundle_id = app_handle.config().identifier.clone();
-    let log_dir = home.join("Library").join("Logs").join(&bundle_id);
-    let log_file = log_dir.join(format!("{}.log", app_handle.package_info().name));
+    let app_name = app_handle.package_info().name.clone();
+
+    let log_dir = dirs::data_dir()
+        .unwrap_or_else(|| home.join(".local").join("share"))
+        .join(&bundle_id)
+        .join("logs");
+
+    let log_file = log_dir.join(format!("{}.log", app_name));
     Ok(log_file.to_string_lossy().to_string())
 }
 
@@ -474,7 +472,6 @@ pub fn run() {
         .plugin(tauri_plugin_aptabase::Builder::new("A-US-6435241436").build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
-        .plugin(tauri_nspanel::init())
         .plugin(
             tauri_plugin_log::Builder::new()
                 .targets([
@@ -502,19 +499,10 @@ pub fn run() {
             update_global_shortcut
         ])
         .setup(|app| {
-            #[cfg(target_os = "macos")]
-            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-
-            #[cfg(target_os = "macos")]
-            {
-                app_nap::disable_app_nap();
-                webkit_config::disable_webview_suspension(app.handle());
-            }
-
             use tauri::Manager;
 
             let version = app.package_info().version.to_string();
-            log::info!("OpenUsage v{} starting", version);
+            log::info!("Tuxmeter v{} starting", version);
 
             // Load config early (lazy init via OnceLock, zero-cost after)
             let _proxy = config::get_resolved_proxy();

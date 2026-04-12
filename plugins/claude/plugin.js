@@ -799,5 +799,5 @@
     return { plan: plan, lines: lines }
   }
 
-  globalThis.__openusage_plugin = { id: "claude", probe }
+  globalThis.__tuxmeter_plugin = { id: "claude", probe }
 })()

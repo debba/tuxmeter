@@ -3,10 +3,9 @@ use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::path::BaseDirectory;
 use tauri::tray::{MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager};
-use tauri_nspanel::ManagerExt;
 use tauri_plugin_store::StoreExt;
 
-use crate::panel::{get_or_init_panel, position_panel_at_tray_icon, show_panel};
+use crate::panel;
 
 const LOG_LEVEL_STORE_KEY: &str = "logLevel";
 
@@ -121,7 +120,7 @@ pub fn create(app_handle: &AppHandle) -> tauri::Result<()> {
     ];
 
     let separator = PredefinedMenuItem::separator(app_handle)?;
-    let about = MenuItem::with_id(app_handle, "about", "About OpenUsage", true, None::<&str>)?;
+    let about = MenuItem::with_id(app_handle, "about", "About Tuxmeter", true, None::<&str>)?;
     let quit = MenuItem::with_id(app_handle, "quit", "Quit", true, None::<&str>)?;
 
     let menu = Menu::with_items(
@@ -136,25 +135,32 @@ pub fn create(app_handle: &AppHandle) -> tauri::Result<()> {
         ],
     )?;
 
+    // On Linux (AppIndicator), left-click on tray icons always opens the
+    // context menu — custom click events are not delivered.
+    let show_menu_on_left = true;
+
     TrayIconBuilder::with_id("tray")
         .icon(icon)
         .icon_as_template(true)
-        .tooltip("OpenUsage")
+        .tooltip("Tuxmeter")
         .menu(&menu)
-        .show_menu_on_left_click(false)
+        .show_menu_on_left_click(show_menu_on_left)
         .on_menu_event(move |app_handle, event| {
             log::debug!("tray menu: {}", event.id.as_ref());
             match event.id.as_ref() {
                 "show_stats" => {
-                    show_panel(app_handle);
+                    log::info!("tray menu: show_stats clicked");
+                    panel::show_panel(app_handle);
                     let _ = app_handle.emit("tray:navigate", "home");
                 }
                 "go_to_settings" => {
-                    show_panel(app_handle);
+                    log::info!("tray menu: go_to_settings clicked");
+                    panel::show_panel(app_handle);
                     let _ = app_handle.emit("tray:navigate", "settings");
                 }
                 "about" => {
-                    show_panel(app_handle);
+                    log::info!("tray menu: about clicked");
+                    panel::show_panel(app_handle);
                     let _ = app_handle.emit("tray:show-about", ());
                 }
                 "quit" => {
@@ -187,20 +193,15 @@ pub fn create(app_handle: &AppHandle) -> tauri::Result<()> {
             } = event
             {
                 if button_state == MouseButtonState::Up {
-                    let Some(panel) = get_or_init_panel!(app_handle) else {
-                        return;
-                    };
-
-                    if panel.is_visible() {
+                    if panel::is_panel_visible(app_handle) {
                         log::debug!("tray click: hiding panel");
-                        panel.hide();
+                        panel::hide_panel(app_handle);
                         return;
                     }
                     log::debug!("tray click: showing panel");
 
-                    // macOS quirk: must show window before positioning to another monitor
-                    panel.show_and_make_key();
-                    position_panel_at_tray_icon(app_handle, rect.position, rect.size);
+                    panel::show_panel(app_handle);
+                    panel::position_panel_at_tray_icon(app_handle, rect.position, rect.size);
                 }
             }
         })

@@ -22,5 +22,5 @@ rm -rf src-tauri/target/release/bundle
 bun tauri build "$@"
 
 echo ""
-echo "✓ Build complete! Output:"
-ls -la src-tauri/target/release/bundle/dmg/*.dmg 2>/dev/null || ls -la src-tauri/target/release/bundle/macos/*.app
+echo "Build complete! Output:"
+ls -la src-tauri/target/release/bundle/deb/*.deb 2>/dev/null || ls -la src-tauri/target/release/bundle/appimage/*.AppImage 2>/dev/null || echo "No .deb or .AppImage found"

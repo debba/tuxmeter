@@ -3,14 +3,14 @@ import { makePluginTestContext } from "../test-helpers.js"
 
 const loadPlugin = async () => {
   await import("./plugin.js")
-  return globalThis.__openusage_plugin
+  return globalThis.__tuxmeter_plugin
 }
 
 const createCtx = (overrides) => makePluginTestContext(overrides, vi)
 
 describe("mock plugin", () => {
   beforeEach(() => {
-    delete globalThis.__openusage_plugin
+    delete globalThis.__tuxmeter_plugin
     if (vi.resetModules) vi.resetModules()
     vi.useRealTimers()
   })

@@ -333,7 +333,7 @@ export function makeTrayBarsSvg(args: {
 
   if (text) {
     parts.push(
-      `<text x="${layout.textX}" y="${layout.textY}" fill="black" font-family="-apple-system,BlinkMacSystemFont,'SF Pro Text',sans-serif" font-size="${layout.fontSize}" font-weight="700" dominant-baseline="middle">${escapeXmlText(text)}</text>`
+      `<text x="${layout.textX}" y="${layout.textY}" fill="black" font-family="system-ui,-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',Roboto,sans-serif" font-size="${layout.fontSize}" font-weight="700" dominant-baseline="middle">${escapeXmlText(text)}</text>`
     )
   }
 

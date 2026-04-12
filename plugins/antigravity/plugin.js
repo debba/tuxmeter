@@ -491,5 +491,5 @@
     throw "Start Antigravity and try again."
   }
 
-  globalThis.__openusage_plugin = { id: "antigravity", probe: probe }
+  globalThis.__tuxmeter_plugin = { id: "antigravity", probe: probe }
 })()
