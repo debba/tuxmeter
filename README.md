@@ -8,6 +8,12 @@ See your usage at a glance from your system tray. No digging through dashboards.
 
 [**Download the latest release**](https://github.com/debba/tuxmeter/releases/latest) (Linux, .deb / .AppImage)
 
+**Arch Linux (AUR):**
+
+```bash
+yay -S tuxmeter-bin
+```
+
 ## What It Does
 
 Tuxmeter lives in your system tray and shows you how much of your AI coding subscriptions you've used. Progress bars, badges, and clear labels. No mental math required.
