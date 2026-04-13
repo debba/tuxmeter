@@ -1,6 +1,6 @@
 [package]
 name = "tuxmeter"
-version = "0.0.1"
+version = "0.0.2"
 description = "Tuxmeter is an open source AI subscription limit tracker for Linux"
 authors = ["Andrea Debernardi"]
 edition = "2024"
