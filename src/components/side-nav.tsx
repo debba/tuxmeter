@@ -255,7 +255,7 @@ export function SideNav({
       <NavButton
         isActive={false}
         onClick={() => {
-          openUrl("https://github.com/robinebers/tuxmeter/issues").catch(console.error)
+          openUrl("https://github.com/debba/tuxmeter/issues").catch(console.error)
           invoke("hide_panel").catch(console.error)
         }}
         aria-label="Help"
