@@ -110,6 +110,13 @@ fn load_single_plugin(
 
     let icon_file = plugin_dir.join(&manifest.icon);
     let icon_bytes = std::fs::read(&icon_file)?;
+    let icon_bytes = match &manifest.brand_color {
+        Some(color) => {
+            let svg = String::from_utf8_lossy(&icon_bytes);
+            svg.replace("currentColor", color).into_bytes()
+        }
+        None => icon_bytes,
+    };
     let icon_data_url = format!("data:image/svg+xml;base64,{}", STANDARD.encode(&icon_bytes));
 
     Ok(LoadedPlugin {
