@@ -1649,7 +1649,7 @@ describe("App", () => {
     await userEvent.click(settingsButtons[0])
 
     // The shortcut should be displayed
-    await screen.findByText(/Cmd \+ Shift \+ U/i)
+    await screen.findByText(/(Cmd|Ctrl) \+ Shift \+ U/i)
 
     // Find and click the clear button (X icon)
     const clearButton = await screen.findByRole("button", { name: /clear shortcut/i })
@@ -1672,7 +1672,7 @@ describe("App", () => {
     await userEvent.click(settingsButtons[0])
 
     // The shortcut should be displayed (formatted version)
-    await screen.findByText(/Cmd \+ Shift \+ O/i)
+    await screen.findByText(/(Cmd|Ctrl) \+ Shift \+ O/i)
   })
 
   it("shows placeholder when no shortcut is set", async () => {

@@ -1,7 +1,16 @@
 import { act, fireEvent, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { GlobalShortcutSection } from "@/components/global-shortcut-section"
+
+const originalNavigatorPlatform = navigator.platform
+
+function setNavigatorPlatform(platform: string) {
+  Object.defineProperty(window.navigator, "platform", {
+    configurable: true,
+    value: platform,
+  })
+}
 
 function renderSection(globalShortcut: string | null = null) {
   const onGlobalShortcutChange = vi.fn()
@@ -20,16 +29,27 @@ async function startRecording() {
 }
 
 describe("GlobalShortcutSection", () => {
-  afterEach(() => {
-    vi.useRealTimers()
+  beforeEach(() => {
+    setNavigatorPlatform("MacIntel")
   })
 
-  it("formats persisted shortcuts for display", () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    setNavigatorPlatform(originalNavigatorPlatform)
+  })
+
+  it("formats persisted shortcuts for display on macOS", () => {
     renderSection("CommandOrControl+Alt+Delete")
     expect(screen.getByText("Cmd + Opt + Delete")).toBeInTheDocument()
   })
 
-  it("records and saves CommandOrControl + Shift + key", async () => {
+  it("formats persisted shortcuts for display on Linux", () => {
+    setNavigatorPlatform("Linux x86_64")
+    renderSection("CommandOrControl+Alt+Delete")
+    expect(screen.getByText("Ctrl + Alt + Delete")).toBeInTheDocument()
+  })
+
+  it("records and saves Command + Shift + key on macOS", async () => {
     const { onGlobalShortcutChange } = renderSection()
     const textbox = await startRecording()
 
@@ -43,6 +63,24 @@ describe("GlobalShortcutSection", () => {
     fireEvent.keyUp(textbox, { key: "Meta", code: "MetaLeft" })
 
     expect(onGlobalShortcutChange).toHaveBeenCalledWith("CommandOrControl+Shift+U")
+    expect(screen.queryByRole("textbox", { name: /Press keys/i })).toBeNull()
+  })
+
+  it("records and saves Super + Shift + key on Linux", async () => {
+    setNavigatorPlatform("Linux x86_64")
+    const { onGlobalShortcutChange } = renderSection()
+    const textbox = await startRecording()
+
+    fireEvent.keyDown(textbox, { key: "Meta", code: "MetaLeft" })
+    fireEvent.keyDown(textbox, { key: "Shift", code: "ShiftLeft" })
+    fireEvent.keyDown(textbox, { key: "U", code: "KeyU" })
+    expect(screen.getByText("Super + Shift + U")).toBeInTheDocument()
+
+    fireEvent.keyUp(textbox, { key: "U", code: "KeyU" })
+    fireEvent.keyUp(textbox, { key: "Shift", code: "ShiftLeft" })
+    fireEvent.keyUp(textbox, { key: "Meta", code: "MetaLeft" })
+
+    expect(onGlobalShortcutChange).toHaveBeenCalledWith("Super+Shift+U")
     expect(screen.queryByRole("textbox", { name: /Press keys/i })).toBeNull()
   })
 
@@ -66,23 +104,24 @@ describe("GlobalShortcutSection", () => {
     expect(onGlobalShortcutChange).toHaveBeenLastCalledWith("CommandOrControl+Numpad1")
   })
 
-  it("deduplicates Meta + Control into one CommandOrControl modifier", async () => {
+  it("records distinct Meta and Control modifiers on Linux", async () => {
+    setNavigatorPlatform("Linux x86_64")
     const { onGlobalShortcutChange } = renderSection()
     const textbox = await startRecording()
 
     fireEvent.keyDown(textbox, { key: "Meta", code: "MetaLeft" })
     fireEvent.keyDown(textbox, { key: "Control", code: "ControlLeft" })
     fireEvent.keyDown(textbox, { key: "A", code: "KeyA" })
-    expect(screen.getByText("Cmd + A")).toBeInTheDocument()
+    expect(screen.getByText("Super + Ctrl + A")).toBeInTheDocument()
 
     fireEvent.keyUp(textbox, { key: "A", code: "KeyA" })
     fireEvent.keyUp(textbox, { key: "Control", code: "ControlLeft" })
     fireEvent.keyUp(textbox, { key: "Meta", code: "MetaLeft" })
 
-    expect(onGlobalShortcutChange).toHaveBeenCalledWith("CommandOrControl+A")
+    expect(onGlobalShortcutChange).toHaveBeenCalledWith("Super+Control+A")
   })
 
-  it("records and saves Alt shortcuts", async () => {
+  it("records and saves Alt shortcuts on macOS", async () => {
     const { onGlobalShortcutChange } = renderSection()
     const textbox = await startRecording()
 
@@ -94,6 +133,21 @@ describe("GlobalShortcutSection", () => {
     fireEvent.keyUp(textbox, { key: "Alt", code: "AltLeft" })
 
     expect(onGlobalShortcutChange).toHaveBeenCalledWith("Alt+Slash")
+  })
+
+  it("records and saves Control shortcuts on Linux", async () => {
+    setNavigatorPlatform("Linux x86_64")
+    const { onGlobalShortcutChange } = renderSection()
+    const textbox = await startRecording()
+
+    fireEvent.keyDown(textbox, { key: "Control", code: "ControlLeft" })
+    fireEvent.keyDown(textbox, { key: "/", code: "Slash" })
+    expect(screen.getByText("Ctrl + /")).toBeInTheDocument()
+
+    fireEvent.keyUp(textbox, { key: "/", code: "Slash" })
+    fireEvent.keyUp(textbox, { key: "Control", code: "ControlLeft" })
+
+    expect(onGlobalShortcutChange).toHaveBeenCalledWith("Control+Slash")
   })
 
   it("does not save when only modifiers are pressed", async () => {

@@ -1,18 +1,44 @@
 import { useEffect, useRef, useState } from "react"
-import { X } from "lucide-react"
+import { Info, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { GlobalShortcut } from "@/lib/settings"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+
+type ShortcutPlatform = "macos" | "linux" | "windows" | "unknown"
+
+function detectShortcutPlatform(): ShortcutPlatform {
+  if (typeof navigator === "undefined") return "unknown"
+
+  const platform = navigator.platform.toLowerCase()
+  if (platform.includes("mac")) return "macos"
+  if (platform.includes("win")) return "windows"
+  if (platform.includes("linux")) return "linux"
+
+  const userAgent = navigator.userAgent.toLowerCase()
+  if (userAgent.includes("mac os")) return "macos"
+  if (userAgent.includes("windows")) return "windows"
+  if (userAgent.includes("linux")) return "linux"
+
+  return "unknown"
+}
+
+function formatModifierForDisplay(modifier: string, platform: ShortcutPlatform): string {
+  if (modifier === "CommandOrControl") return platform === "macos" ? "Cmd" : "Ctrl"
+  if (modifier === "Command") return "Cmd"
+  if (modifier === "Control") return "Ctrl"
+  if (modifier === "Option") return "Opt"
+  if (modifier === "Alt") return platform === "macos" ? "Opt" : "Alt"
+  if (modifier === "Super") return platform === "windows" ? "Win" : "Super"
+  return modifier
+}
 
 // Convert internal shortcut format to display format
-// e.g., "CommandOrControl+Shift+U" -> "Cmd + Shift + U"
-function formatShortcutForDisplay(shortcut: string): string {
+// e.g., "CommandOrControl+Shift+U" -> "Cmd + Shift + U" on macOS, "Ctrl + Shift + U" elsewhere
+function formatShortcutForDisplay(shortcut: string, platform = detectShortcutPlatform()): string {
   return shortcut
-    .replace(/CommandOrControl/g, "Cmd")
-    .replace(/Command/g, "Cmd")
-    .replace(/Control/g, "Ctrl")
-    .replace(/Option/g, "Opt")
-    .replace(/Alt/g, "Opt")
-    .replace(/\+/g, " + ")
+    .split("+")
+    .map((part) => formatModifierForDisplay(part, platform))
+    .join(" + ")
 }
 
 // Modifier codes (using event.code for reliable detection)
@@ -95,30 +121,30 @@ function codeToTauriKey(code: string): string {
   return specialKeys[code] || code
 }
 
+function modifierCodeToTauriModifier(code: string, platform: ShortcutPlatform): string | null {
+  const normalized = normalizeModifierCode(code)
+  if (normalized === "Meta") return platform === "macos" ? "CommandOrControl" : "Super"
+  if (normalized === "Control") return "Control"
+  if (normalized === "Alt") return "Alt"
+  if (normalized === "Shift") return "Shift"
+  return null
+}
+
 // Build shortcut array from currently pressed keys (modifiers + main key)
-function buildShortcutFromCodes(codes: Set<string>): { display: string; tauri: string | null } {
+function buildShortcutFromCodes(
+  codes: Set<string>,
+  platform = detectShortcutPlatform(),
+): { display: string; tauri: string | null } {
   const modifiers: string[] = []
   const displayMods: string[] = []
   let mainCode: string | null = null
 
   for (const code of codes) {
     if (MODIFIER_CODES.has(code)) {
-      const normalized = normalizeModifierCode(code)
-      if (normalized === "Meta" || normalized === "Control") {
-        if (!modifiers.includes("CommandOrControl")) {
-          modifiers.push("CommandOrControl")
-          displayMods.push("Cmd")
-        }
-      } else if (normalized === "Alt") {
-        if (!modifiers.includes("Alt")) {
-          modifiers.push("Alt")
-          displayMods.push("Opt")
-        }
-      } else if (normalized === "Shift") {
-        if (!modifiers.includes("Shift")) {
-          modifiers.push("Shift")
-          displayMods.push("Shift")
-        }
+      const modifier = modifierCodeToTauriModifier(code, platform)
+      if (modifier && !modifiers.includes(modifier)) {
+        modifiers.push(modifier)
+        displayMods.push(formatModifierForDisplay(modifier, platform))
       }
     } else {
       // Non-modifier key - use the last one pressed
@@ -243,7 +269,17 @@ export function GlobalShortcutSection({
 
   return (
     <section>
-      <h3 className="text-lg font-semibold mb-0">Global Shortcut</h3>
+      <div className="flex items-center gap-1.5 mb-0">
+        <h3 className="text-lg font-semibold">Global Shortcut</h3>
+        <Tooltip>
+          <TooltipTrigger className="text-muted-foreground hover:text-foreground transition-colors" aria-label="Shortcut info">
+            <Info className="h-4 w-4" />
+          </TooltipTrigger>
+          <TooltipContent side="right">
+            On Wayland, shortcuts are managed by the system portal. Your desktop may prompt you to confirm or customize the binding.
+          </TooltipContent>
+        </Tooltip>
+      </div>
       <p className="text-sm text-muted-foreground mb-2">
         Show panel from anywhere
       </p>

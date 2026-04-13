@@ -2,6 +2,8 @@ mod config;
 mod local_http_api;
 mod panel;
 mod plugin_engine;
+#[cfg(target_os = "linux")]
+mod portal_shortcuts;
 mod tray;
 
 use std::collections::{HashMap, HashSet};
@@ -360,7 +362,6 @@ fn update_global_shortcut(
     app_handle: tauri::AppHandle,
     shortcut: Option<String>,
 ) -> Result<(), String> {
-    let global_shortcut = app_handle.global_shortcut();
     let normalized_shortcut = shortcut.and_then(|value| {
         let trimmed = value.trim().to_string();
         if trimmed.is_empty() {
@@ -369,6 +370,21 @@ fn update_global_shortcut(
             Some(trimmed)
         }
     });
+
+    #[cfg(target_os = "linux")]
+    if portal_shortcuts::is_wayland() {
+        return portal_shortcuts::update_shortcut(&app_handle, normalized_shortcut);
+    }
+
+    update_global_shortcut_x11(&app_handle, normalized_shortcut)
+}
+
+#[cfg(desktop)]
+fn update_global_shortcut_x11(
+    app_handle: &tauri::AppHandle,
+    normalized_shortcut: Option<String>,
+) -> Result<(), String> {
+    let global_shortcut = app_handle.global_shortcut();
     let mut managed_shortcut = managed_shortcut_slot()
         .lock()
         .map_err(|e| format!("failed to lock managed shortcut state: {}", e))?;
@@ -382,7 +398,6 @@ fn update_global_shortcut(
     if let Some(existing) = previous_shortcut.as_deref() {
         match global_shortcut.unregister(existing) {
             Ok(()) => {
-                // Keep in-memory state aligned with actual registration state.
                 *managed_shortcut = None;
             }
             Err(e) => {
@@ -553,20 +568,40 @@ pub fn run() {
                             let shortcut = shortcut.trim();
                             if !shortcut.is_empty() {
                                 let handle = app.handle().clone();
-                                log::info!("Registering initial global shortcut: {}", shortcut);
-                                if let Err(e) = handle.global_shortcut().on_shortcut(
+
+                                #[cfg(target_os = "linux")]
+                                let use_portal = portal_shortcuts::is_wayland();
+                                #[cfg(not(target_os = "linux"))]
+                                let use_portal = false;
+
+                                eprintln!(
+                                    "[shortcut-init] shortcut={} portal={}",
                                     shortcut,
-                                    |app, _shortcut, event| {
-                                        handle_global_shortcut(app, event);
-                                    },
-                                ) {
-                                    log::warn!("Failed to register initial global shortcut: {}", e);
-                                } else if let Ok(mut managed_shortcut) =
-                                    managed_shortcut_slot().lock()
-                                {
-                                    *managed_shortcut = Some(shortcut.to_string());
+                                    use_portal
+                                );
+
+                                if use_portal {
+                                    #[cfg(target_os = "linux")]
+                                    portal_shortcuts::spawn_listener(
+                                        handle,
+                                        Some(shortcut.to_string()),
+                                    );
                                 } else {
-                                    log::warn!("Failed to store managed shortcut in memory");
+                                    if let Err(e) = handle.global_shortcut().on_shortcut(
+                                        shortcut,
+                                        |app, _shortcut, event| {
+                                            handle_global_shortcut(app, event);
+                                        },
+                                    ) {
+                                        log::warn!(
+                                            "Failed to register initial global shortcut: {}",
+                                            e
+                                        );
+                                    } else if let Ok(mut managed_shortcut) =
+                                        managed_shortcut_slot().lock()
+                                    {
+                                        *managed_shortcut = Some(shortcut.to_string());
+                                    }
                                 }
                             }
                         }
