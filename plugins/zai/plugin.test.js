@@ -41,6 +41,35 @@ const QUOTA_RESPONSE = {
   },
 }
 
+const QUOTA_RESPONSE_CREDIT_LIMIT = {
+  code: 200,
+  data: {
+    limits: [
+      {
+        type: "CREDIT_LIMIT",
+        usage: 2000,
+        currentValue: 40,
+        remaining: 1960,
+        percentage: 2,
+        nextResetTime: 1738368000000,
+        unit: 3,
+        number: 5,
+      },
+      {
+        type: "CREDIT_LIMIT",
+        usage: 10000,
+        currentValue: 40,
+        remaining: 9960,
+        percentage: 1,
+        nextResetTime: 1738972800000,
+        unit: 6,
+        number: 1,
+      },
+    ],
+    level: "pro",
+  },
+}
+
 const QUOTA_RESPONSE_WITH_WEEKLY = {
   code: 200,
   data: {
@@ -527,5 +556,36 @@ describe("zai plugin", () => {
     expect(weekly).toBeTruthy()
     expect(weekly.used).toBe(75)
     expect(weekly.resetsAt).toBe(new Date(1738972800000).toISOString())
+  })
+  it("maps CREDIT_LIMIT entries like TOKENS_LIMIT for Session and Weekly", async () => {
+    const ctx = makeCtx()
+    mockEnvWithKey(ctx, "test-key")
+    ctx.host.http.request.mockImplementation((opts) => {
+      if (opts.url.includes("subscription")) {
+        return { status: 200, bodyText: JSON.stringify(SUBSCRIPTION_RESPONSE) }
+      }
+      return { status: 200, bodyText: JSON.stringify(QUOTA_RESPONSE_CREDIT_LIMIT) }
+    })
+
+    const plugin = await loadPlugin()
+    const result = plugin.probe(ctx)
+
+    const session = result.lines.find((l) => l.label === "Session")
+    expect(session).toBeTruthy()
+    expect(session.type).toBe("progress")
+    expect(session.used).toBe(2)
+    expect(session.limit).toBe(100)
+    expect(session.format).toEqual({ kind: "percent" })
+    expect(session.periodDurationMs).toBe(5 * 60 * 60 * 1000)
+    expect(session.resetsAt).toBe(new Date(1738368000000).toISOString())
+
+    const weekly = result.lines.find((l) => l.label === "Weekly")
+    expect(weekly).toBeTruthy()
+    expect(weekly.type).toBe("progress")
+    expect(weekly.used).toBe(1)
+    expect(weekly.periodDurationMs).toBe(7 * 24 * 60 * 60 * 1000)
+    expect(weekly.resetsAt).toBe(new Date(1738972800000).toISOString())
+
+    expect(result.lines.some((l) => l.text === "No usage data")).toBe(false)
   })
 })
