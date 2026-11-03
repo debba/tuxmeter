@@ -42,7 +42,7 @@ Tuxmeter lives in your system tray and shows you how much of your AI coding subs
 - [**MiniMax**](docs/providers/minimax.md) / coding plan session
 - [**OpenCode Go**](docs/providers/opencode-go.md) / 5h, weekly, monthly spend limits
 - [**Windsurf**](docs/providers/windsurf.md) / prompt credits, flex credits
-- [**Z.ai**](docs/providers/zai.md) / session, weekly, web searches
+- [**Z.ai**](docs/providers/zai.md) / session and weekly token/credit quotas, web searches
 
 ## How to Contribute
 

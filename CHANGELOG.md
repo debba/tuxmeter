@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.0.3
+
+### Bug Fixes
+- **zai**: show session and weekly usage for GLM Coding plans returning `CREDIT_LIMIT`, while preserving support for `TOKENS_LIMIT` ([#1](https://github.com/debba/tuxmeter/pull/1)) by @taimurrabuske
+
+**Full Changelog**: [v0.0.2...v0.0.3](https://github.com/debba/tuxmeter/compare/v0.0.2...v0.0.3)
+
 ## v0.0.2
 
 ### Features
